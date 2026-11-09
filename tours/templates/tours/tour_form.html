@@ -1,0 +1,10 @@
+{% extends 'tours/base.html' %}
+{% block title %}{% if object %}Изменить тур{% else %}Новый тур{% endif %}{% endblock %}
+{% block content %}
+<h2>{% if object %}Изменить тур{% else %}Новый тур{% endif %}</h2>
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit">Сохранить</button>
+</form>
+{% endblock %}

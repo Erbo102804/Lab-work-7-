@@ -1,0 +1,10 @@
+{% extends 'tours/base.html' %}
+{% block title %}Купить тур{% endblock %}
+{% block content %}
+<h2>Покупка: {{ session.tour.title }} — {{ session.date }} {{ session.time|time:"H:i" }}</h2>
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit">Купить</button>
+</form>
+{% endblock %}

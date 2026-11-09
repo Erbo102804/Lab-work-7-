@@ -1,0 +1,31 @@
+{% extends 'tours/base.html' %}
+{% block title %}{{ tour.title }}{% endblock %}
+{% block content %}
+<h2>{{ tour.title }}</h2>
+<p>{{ tour.description }}</p>
+<p>Цена: {{ tour.price }} · Длительность: {{ tour.duration_hours }} ч</p>
+<p>Категории:
+  {% for c in tour.categories.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}
+  {% empty %}без категории{% endfor %}
+</p>
+
+<h3>Доступные даты и время</h3>
+<ul>
+  {% for s in tour.sessions.all %}
+  <li>{{ s.date }} {{ s.time|time:"H:i" }} —
+      <a class="btn" href="{% url 'tours:book' s.pk %}">Купить</a></li>
+  {% empty %}
+  <li>Слотов пока нет</li>
+  {% endfor %}
+</ul>
+
+<h3>Комментарии</h3>
+<p><a class="btn" href="{% url 'tours:comment' tour.pk %}">Оставить комментарий</a></p>
+<ul>
+  {% for c in tour.comments.all %}
+  <li><b>{{ c.user.username }}</b> ({{ c.rating }}/5): {{ c.text }}</li>
+  {% empty %}
+  <li>Комментариев пока нет</li>
+  {% endfor %}
+</ul>
+{% endblock %}

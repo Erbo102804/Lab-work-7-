@@ -1,0 +1,29 @@
+{% extends 'tours/base.html' %}
+{% block title %}Список туров{% endblock %}
+{% block content %}
+<form method="get">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Поиск по названию">
+  <select name="category">
+    <option value="">Все категории</option>
+    {% for c in categories %}
+    <option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Найти</button>
+</form>
+<p><a class="btn" href="{% url 'tours:create' %}">+ Добавить тур</a></p>
+<table>
+  <tr><th>Название</th><th>Категории</th><th>Цена</th><th>Действия</th></tr>
+  {% for t in tours %}
+  <tr>
+    <td><a href="{{ t.get_absolute_url }}">{{ t.title }}</a></td>
+    <td>{% for c in t.categories.all %}{{ c.name }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+    <td>{{ t.price }}</td>
+    <td><a href="{% url 'tours:update' t.pk %}">Изменить</a> |
+        <a href="{% url 'tours:delete' t.pk %}">Удалить</a></td>
+  </tr>
+  {% empty %}
+  <tr><td colspan="4">Туров пока нет</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
