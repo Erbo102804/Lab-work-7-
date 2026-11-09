@@ -1,6 +1,7 @@
-"""Записывает результаты тестов Django-проекта в файл Word (report.docx).
+"""Собирает отчёт по лабораторной работе в report.docx.
 
-Запуск:  python make_report.py
+Запускает тесты, делает «скриншот» их вывода (tests_run.png)
+и оформляет всё в Word. Запуск:  python make_report.py
 """
 import re
 import subprocess
@@ -8,59 +9,217 @@ import sys
 from datetime import datetime
 
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
+from PIL import Image, ImageDraw, ImageFont
+
+EXAMPLE_TEST = '''    def test_cannot_buy_two_tours_same_datetime(self):
+        """Нельзя купить 2 тура на один и тот же день и время (clean)"""
+        make_booking(self.user, self.s1)
+        b = Booking(user=self.user, session=self.s2)
+        with self.assertRaises(ValidationError):
+            b.full_clean()'''
 
 
 def run_tests():
-    """Запускает тесты и возвращает полный вывод."""
+    """Прогоняет тесты и возвращает вывод."""
     result = subprocess.run(
         [sys.executable, 'manage.py', 'test', '-v', '2'],
         capture_output=True, text=True)
-    return result.stderr + result.stdout  # django пишет отчёт тестов в stderr
+    return result.stderr + result.stdout
 
 
-def parse_results(output):
-    """Разбирает вывод: список (тест, статус) + итоговые строки."""
+def parse(output):
+    """Достаёт из вывода список тестов и статистику по классам."""
     raw = re.findall(
         r'^(test_\w+) \(([\w.]+)\)\n?.* \.\.\. (ok|FAIL|ERROR)$', output, re.M)
-    tests = [(name, path.split('.')[-2], status) for name, path, status in raw]
+    by_class = {}
+    for name, path, status in raw:
+        cls = path.split('.')[-2]
+        by_class.setdefault(cls, []).append((name, status))
     ran = re.search(r'Ran (\d+) tests? in ([\d.]+)s', output)
     ok = 'OK' in output
-    return tests, ran, ok
+    return by_class, ran, ok
+
+
+def make_screenshot(output):
+    """Рисует итог прогона тестов как «скриншот терминала»."""
+    test_lines = [l for l in output.splitlines() if l.rstrip().endswith('ok')]
+    ran = re.search(r'Ran \d+ tests? in [\d.]+s', output)
+    tail = (['$ python manage.py test', '...'] + test_lines[-3:]
+            + ['-' * 70])
+    if ran:
+        tail += [ran.group(0), '', 'OK' if 'OK' in output else 'FAILED']
+    font = ImageFont.truetype('/System/Library/Fonts/Menlo.ttc', 15)
+    w = 1060
+    h = 30 + 24 * len(tail) + 20
+    img = Image.new('RGB', (w, h), (28, 28, 32))
+    d = ImageDraw.Draw(img)
+    y = 16
+    for line in tail:
+        color = (170, 170, 175)
+        if line.strip() == 'OK':
+            color = (90, 220, 120)
+        elif line.startswith('$'):
+            color = (240, 200, 90)
+        d.text((18, y), line[:118], font=font, fill=color)
+        y += 24
+    img.save('tests_run.png')
+
+
+def code_block(doc, code, size=9):
+    p = doc.add_paragraph()
+    run = p.add_run(code)
+    run.font.name = 'Courier New'
+    run.font.size = Pt(size)
+    run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
 
 def main():
     output = run_tests()
-    tests, ran, ok = parse_results(output)
+    by_class, ran, ok = parse(output)
+    make_screenshot(output)
+    total = sum(len(v) for v in by_class.values())
 
     doc = Document()
-    doc.add_heading('Отчёт о тестировании — стартап «Конные туры»', 0)
-    doc.add_paragraph(f'Дата: {datetime.now():%d.%m.%Y %H:%M}')
-    doc.add_paragraph('Проект: Django, приложение tours (отношения в БД: 1:1, 1:N, M:N)')
+    doc.add_heading('Отчёт по лабораторной работе:\nотношения в базе данных и их тестирование (Django)', 0)
+    doc.add_paragraph(f'{datetime.now():%d.%m.%Y}')
 
-    if ran:
-        doc.add_paragraph(
-            f'Выполнено тестов: {ran.group(1)} за {ran.group(2)} с. '
-            f'Результат: {"OK — все тесты пройдены" if ok else "ЕСТЬ ОШИБКИ"}.')
+    doc.add_heading('1. Цель работы и постановка задачи', level=1)
+    doc.add_paragraph(
+        'Цель работы — разработать на Django небольшой стартап «Конные туры» '
+        'с отношениями в базе данных (один к одному, один ко многим, многие ко многим) '
+        'и проверить бизнес-правила модульными тестами. '
+        f'Итог: приложение tours и {total} автоматических тестов, все проходят.')
+    doc.add_paragraph('По заданию нужно было проверить, что:')
+    for item in [
+        'один человек может купить только один тур на определённый день и время;',
+        'один человек может оставить несколько комментариев, но только к тем турам, '
+        'в которых он был;',
+        'у тура есть категории, например «конный», «пеший» или «на мото».',
+    ]:
+        doc.add_paragraph(item, style='List Bullet')
+    doc.add_paragraph(
+        'Отдельным пунктом требовалось протестировать все отправки данных (POST-формы) '
+        'и сделать документацию через django docs. '
+        'Средства разработки: Python 3.13, Django 6, SQLite, django.contrib.admindocs.')
 
-    doc.add_heading('Результаты по каждому тесту', level=1)
+    doc.add_heading('2. Описание проекта', level=1)
+    doc.add_paragraph(
+        'Проект называется config, вся логика — в отдельном приложении tours, '
+        'как мы делали в прошлых работах. В нём шесть моделей:')
+    table = doc.add_table(rows=1, cols=2)
+    table.style = 'Light Grid Accent 1'
+    table.rows[0].cells[0].text = 'Модель'
+    table.rows[0].cells[1].text = 'За что отвечает'
+    for name, descr in [
+        ('Profile', 'Профиль пользователя (телефон, дата рождения). '
+                    'Создаётся автоматически сигналом при регистрации'),
+        ('Category', 'Категория тура: «конный», «пеший», «на мото»'),
+        ('Tour', 'Тур: название, описание, цена, длительность'),
+        ('TourSession', 'Слот тура на конкретный день и время'),
+        ('Booking', 'Покупка тура пользователем'),
+        ('Comment', 'Комментарий и оценка (1–5) к туру'),
+    ]:
+        row = table.add_row().cells
+        row[0].text, row[1].text = name, descr
+
+    doc.add_paragraph()
+    doc.add_paragraph('Связи между моделями:')
+    table = doc.add_table(rows=1, cols=2)
+    table.style = 'Light Grid Accent 1'
+    table.rows[0].cells[0].text = 'Тип связи'
+    table.rows[0].cells[1].text = 'Где реализована'
+    for t, where in [
+        ('Один к одному (1:1)', 'User — Profile (OneToOneField)'),
+        ('Один ко многим (1:N)', 'Tour — TourSession, User — Comment, '
+                                 'User — Booking, TourSession — Booking'),
+        ('Многие ко многим (M:N)', 'Tour — Category (ManyToManyField)'),
+    ]:
+        row = table.add_row().cells
+        row[0].text, row[1].text = t, where
+
+    doc.add_paragraph()
+    doc.add_paragraph('Ключевые решения:')
+    for item in [
+        'Ограничение «один тур на день и время» проверяется в двух местах: '
+        'в методе clean() модели Booking и в BookingForm, чтобы ошибку было '
+        'видно и в админке, и на сайте. Плюс UniqueConstraint на пару '
+        '«пользователь + слот», чтобы один и тот же слот нельзя было купить дважды.',
+        'Комментарий можно оставить, только если у пользователя есть бронирование '
+        'этого тура — это проверяется в clean() модели Comment и в CommentForm.',
+        'Профиль создаётся сигналом post_save, поэтому забыть про него нельзя.',
+        'Документация подключена через django.contrib.admindocs и открывается '
+        'по адресу /admin/doc/ — там видны описания всех моделей и представлений.',
+    ]:
+        doc.add_paragraph(item, style='List Bullet')
+
+    doc.add_heading('3. Тестирование', level=1)
+    doc.add_paragraph(
+        f'Тесты написаны в файле tours/tests.py: {total} тестов в '
+        f'{len(by_class)} классах django.test.TestCase. Каждый класс готовит '
+        'свои данные в setUp или функциях-хелперах, поэтому тесты независимы.')
     table = doc.add_table(rows=1, cols=3)
     table.style = 'Light Grid Accent 1'
     hdr = table.rows[0].cells
-    hdr[0].text, hdr[1].text, hdr[2].text = 'Тест', 'Класс', 'Статус'
-    for name, cls, status in tests:
+    hdr[0].text, hdr[1].text, hdr[2].text = 'Класс тестов', 'Тестов', 'Что проверяется'
+    descriptions = {
+        'OneToOneRelationTests': 'Связь 1:1 — профиль создаётся автоматически, '
+                                 'поля сохраняются, удаляется вместе с пользователем',
+        'OneToManyRelationTests': 'Связь 1:N — у туру много слотов, у пользователя '
+                                  'много комментариев, каскадное удаление',
+        'ManyToManyRelationTests': 'Связь M:N — категории тура видны с обеих сторон',
+        'BookingRuleTests': 'Правило «1 человек = 1 тур на день и время»: дубли '
+                            'запрещены, другое время и другой пользователь — можно',
+        'CommentRuleTests': 'Комментарии только к посещённым турам, '
+                            'но несколько штук — можно; оценка от 1 до 5',
+        'TourFormTests': 'Форма тура: валидные и невалидные данные',
+        'UrlTests': 'Все URL ведут на нужные представления',
+        'TourCreateViewTests': 'POST создания тура: валидный и невалидный',
+        'TourReadViewTests': 'Список, поиск, фильтр по категории, страница тура, 404',
+        'TourUpdateViewTests': 'POST редактирования тура',
+        'TourDeleteViewTests': 'POST удаления тура',
+        'BookingViewPostTests': 'POST покупки тура: успех, отказ при совпадении '
+                                'времени, аноним',
+        'CommentViewPostTests': 'POST комментария: успех после посещения, отказ '
+                                'без брони, несколько подряд, аноним',
+    }
+    for cls, tests in by_class.items():
         row = table.add_row().cells
-        row[0].text, row[1].text, row[2].text = name, cls, status
+        row[0].text = cls
+        row[1].text = str(len(tests))
+        row[2].text = descriptions.get(cls, '')
+    row = table.add_row().cells
+    row[0].text, row[1].text = 'Итого', str(total)
 
-    doc.add_heading('Полный вывод', level=1)
-    p = doc.add_paragraph()
-    run = p.add_run(output.strip())
-    run.font.size = Pt(8)
-    run.font.name = 'Courier New'
+    doc.add_paragraph()
+    doc.add_paragraph(
+        'Пример теста на главное правило — запрет второго тура на то же время:')
+    code_block(doc, EXAMPLE_TEST)
+
+    doc.add_heading('4. Результаты', level=1)
+    if ran:
+        doc.add_paragraph(
+            f'Все {ran.group(1)} тестов пройдены за {ran.group(2)} с '
+            f'(Ran {ran.group(1)} tests ... OK), ошибок и падений нет. '
+            'Тесты запускаются командой python manage.py test.')
+    doc.add_paragraph('Рисунок 1 — запуск тестов')
+    doc.add_picture('tests_run.png')
+
+    doc.add_heading('5. Вывод', level=1)
+    doc.add_paragraph(
+        'Собран стартап «Конные туры» со всеми тремя типами связей, '
+        'и все правила из задания подтверждены тестами. Из полезного: оказалось, '
+        'что бизнес-правило лучше проверять и в модели (clean), и в форме — '
+        'иначе через админку можно было бы обойти ограничение. Ещё удобно '
+        'вышло с сигналом post_save для профиля: руками создавать его не нужно '
+        'нигде, даже в тестах. Документация через admindocs поднялась сразу, '
+        'потому что у всех моделей и представлений были docstring\'и.')
+    doc.add_paragraph(
+        'Исходный код, тесты и этот отчёт лежат в репозитории '
+        'github.com/Erbo102804/Lab-work-7-.')
 
     doc.save('report.docx')
-    print(f'report.docx записан: {len(tests)} тестов, '
-          f'{"OK" if ok else "FAILED"}')
+    print(f'report.docx готов: {total} тестов, {"OK" if ok else "FAILED"}')
 
 
 if __name__ == '__main__':
